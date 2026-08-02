@@ -1,19 +1,16 @@
 export const colors = {
-  background: '#F5F4FB',
+  background: '#FAFAFC',
+  surface: '#FFFFFF',
   primary: '#6C5CE7',
-  primaryDark: '#5A4BD1',
-  card: '#FFFFFF',
-  textPrimary: '#1A1A2E',
-  textSecondary: '#8B8B9E',
-  bubbleMine: '#6C5CE7',
-  bubbleTheirs: '#FFFFFF',
-  bubbleTextMine: '#FFFFFF',
-  bubbleTextTheirs: '#1A1A2E',
-  border: '#ECEBF7',
-  online: '#4CD97B',
+  primaryMuted: '#EEECFB',
+  textPrimary: '#14141F',
+  textSecondary: '#9A99A6',
+  hairline: '#ECECF2',
+  online: '#3DD98A',
+  danger: '#E5484D',
 };
 
-const AVATAR_PALETTE = ['#F97C7C', '#6C5CE7', '#4CD97B', '#FFB84D', '#4DA3FF', '#FF7CC5'];
+const AVATAR_PALETTE = ['#F97C7C', '#6C5CE7', '#3DD98A', '#FFB84D', '#4DA3FF', '#FF7CC5'];
 
 export function avatarColorFor(id: string): string {
   let hash = 0;

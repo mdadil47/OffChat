@@ -22,12 +22,13 @@ interface ChatContextValue {
   messages: OffchatMessage[];
   isScanning: boolean;
   isAdvertising: boolean;
-  isSecure: boolean; // true once the encryption handshake has completed
+  isTogglingAdvertising: boolean;
+  isSecure: boolean;
   startScan: () => void;
   stopScan: () => void;
   connectTo: (deviceId: string) => Promise<void>;
   disconnect: () => Promise<void>;
-  startAdvertising: () => Promise<void>;
+  toggleAdvertising: () => Promise<void>;
   sendMessage: (body: string) => Promise<void>;
 }
 
@@ -35,7 +36,7 @@ const ChatContext = createContext<ChatContextValue | null>(null);
 
 export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const transportRef = useRef<BleTransport>(new BleTransport());
-  const keyPairRef = useRef(generateKeyPair()); // fresh per app session
+  const keyPairRef = useRef(generateKeyPair());
   const sharedKeyRef = useRef<Uint8Array | null>(null);
 
   const [peers, setPeers] = useState<DiscoveredPeer[]>([]);
@@ -43,27 +44,21 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [messages, setMessages] = useState<OffchatMessage[]>([]);
   const [isScanning, setIsScanning] = useState(false);
   const [isAdvertising, setIsAdvertising] = useState(false);
+  const [isTogglingAdvertising, setIsTogglingAdvertising] = useState(false);
   const [isSecure, setIsSecure] = useState(false);
 
-  // Central-role send path (we connected out to someone)
   const sendWireCentral = useCallback((payload: WirePayload) => transportRef.current.send(payload), []);
-  // Peripheral-role send path (someone connected to us)
   const sendWirePeripheral = useCallback(
     (payload: WirePayload) => GattServerBridge.notifyMessage(JSON.stringify(payload)),
     [],
   );
 
-  /** Shared handler for any incoming wire payload, regardless of which BLE role received it. */
   const handleIncomingPayload = useCallback(
     (payload: WirePayload, replyVia: (p: WirePayload) => Promise<any>) => {
       if (payload.type === 'handshake') {
         const theirPublicKey = base64ToPublicKey(payload.publicKey);
         sharedKeyRef.current = deriveSharedKey(theirPublicKey, keyPairRef.current.secretKey);
         setIsSecure(true);
-
-        // If we haven't already sent our own handshake on this connection
-        // (e.g. we're the peripheral, who doesn't proactively initiate),
-        // reply with ours so both sides derive the same shared key.
         replyVia({ type: 'handshake', publicKey: publicKeyToBase64(keyPairRef.current.publicKey) }).catch(
           (e) => console.warn('Handshake reply failed (may already be sent)', e),
         );
@@ -110,7 +105,7 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const unsubscribe = GattServerBridge.onPeripheralConnectionChanged((event) => {
       if (event.connected) {
         setConnectedPeerId(event.deviceId);
-        sharedKeyRef.current = null; // fresh handshake required per new connection
+        sharedKeyRef.current = null;
         setIsSecure(false);
       } else {
         setConnectedPeerId((prev) => (prev === event.deviceId ? null : prev));
@@ -140,13 +135,33 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setIsScanning(false);
   }, []);
 
-  const startAdvertising = useCallback(async () => {
-    const granted = await requestBlePermissions();
-    if (!granted) return;
-    await GattServerBridge.startAdvertising('Offchat-Device');
-    setIsAdvertising(true);
-  }, []);
+  const toggleAdvertising = useCallback(async () => {
+  setIsTogglingAdvertising(true);
+  const startedAt = Date.now();
+  const MIN_VISIBLE_MS = 500;
 
+  try {
+    if (isAdvertising) {
+      await GattServerBridge.stopAdvertising();
+      setIsAdvertising(false);
+      stopScan();
+      setPeers([]);
+    } else {
+      const granted = await requestBlePermissions();
+      if (!granted) return;
+      await GattServerBridge.startAdvertising('Offchat-Device');
+      setIsAdvertising(true);
+      startScan();
+    }
+  } finally {
+    const elapsed = Date.now() - startedAt;
+    const remaining = MIN_VISIBLE_MS - elapsed;
+    if (remaining > 0) {
+      await new Promise((resolve) => setTimeout(resolve, remaining));
+    }
+    setIsTogglingAdvertising(false);
+  }
+}, [isAdvertising, startScan, stopScan]);
   const connectTo = useCallback(
     async (deviceId: string) => {
       stopScan();
@@ -156,8 +171,6 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
         handleIncomingPayload(payload, sendWireCentral);
       });
       setConnectedPeerId(deviceId);
-
-      // As the central (the one who connected out), we initiate the handshake.
       await sendWireCentral({
         type: 'handshake',
         publicKey: publicKeyToBase64(keyPairRef.current.publicKey),
@@ -185,8 +198,6 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
       try {
         const encrypted = encrypt(JSON.stringify(msg), sharedKeyRef.current);
         const payload: WirePayload = { type: 'chat', nonce: encrypted.nonce, ciphertext: encrypted.ciphertext };
-
-        // Try whichever role applies — same central/peripheral ambiguity as before.
         if (connectedPeerId) {
           await sendWireCentral(payload);
         } else {
@@ -209,15 +220,30 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
       messages,
       isScanning,
       isAdvertising,
+      isTogglingAdvertising,
       isSecure,
       startScan,
       stopScan,
       connectTo,
       disconnect,
-      startAdvertising,
+      toggleAdvertising,
       sendMessage,
     }),
-    [peers, connectedPeerId, messages, isScanning, isAdvertising, isSecure, startScan, stopScan, connectTo, disconnect, startAdvertising, sendMessage],
+    [
+      peers,
+      connectedPeerId,
+      messages,
+      isScanning,
+      isAdvertising,
+      isTogglingAdvertising,
+      isSecure,
+      startScan,
+      stopScan,
+      connectTo,
+      disconnect,
+      toggleAdvertising,
+      sendMessage,
+    ],
   );
 
   return <ChatContext.Provider value={value}>{children}</ChatContext.Provider>;

@@ -1,45 +1,33 @@
-/**
- * Sample React Native App
- * https://github.com/facebook/react-native
- *
- * @format
- */
+import React, { useState } from 'react';
+import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
+import { StatusBar } from 'react-native';
+import { ChatProvider, useChat } from './src/context/ChatContext';
+import DeviceListScreen from './src/screens/DeviceListScreen';
+import ChatScreen from './src/screens/ChatScreen';
 
-import { NewAppScreen } from '@react-native/new-app-screen';
-import { StatusBar, StyleSheet, useColorScheme, View } from 'react-native';
-import {
-  SafeAreaProvider,
-  useSafeAreaInsets,
-} from 'react-native-safe-area-context';
+type Screen = 'DeviceList' | 'Chat';
 
-function App() {
-  const isDarkMode = useColorScheme() === 'dark';
+function Navigator() {
+  const [screen, setScreen] = useState<Screen>('DeviceList');
+  const { connectedPeerId } = useChat();
 
+  const navigation = { navigate: (name: Screen) => setScreen(name) };
+
+  if (screen === 'Chat' || connectedPeerId) {
+    return <ChatScreen />;
+  }
+  return <DeviceListScreen navigation={navigation} />;
+}
+
+export default function App() {
   return (
     <SafeAreaProvider>
-      <StatusBar barStyle={isDarkMode ? 'light-content' : 'dark-content'} />
-      <AppContent />
+      <SafeAreaView style={{ flex: 1, backgroundColor: '#0b0f14' }}>
+        <StatusBar barStyle="light-content" />
+        <ChatProvider>
+          <Navigator />
+        </ChatProvider>
+      </SafeAreaView>
     </SafeAreaProvider>
   );
 }
-
-function AppContent() {
-  const safeAreaInsets = useSafeAreaInsets();
-
-  return (
-    <View style={styles.container}>
-      <NewAppScreen
-        templateFileName="App.tsx"
-        safeAreaInsets={safeAreaInsets}
-      />
-    </View>
-  );
-}
-
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-  },
-});
-
-export default App;

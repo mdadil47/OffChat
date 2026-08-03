@@ -14,9 +14,9 @@ import Avatar from '../components/Avatar';
 import PulseRing from '../components/PulseRing';
 import { SkeletonDeviceRow } from '../components/Skeleton';
 import EmptyState from '../components/EmptyState';
-import { colors } from '../theme/colors';
 import { haptics } from '../services/haptics';
-
+import { colors } from '../theme/colors';
+import { fonts } from '../theme/typography';
 
 export default function DeviceListScreen({ navigation }: any) {
   const {
@@ -54,8 +54,15 @@ export default function DeviceListScreen({ navigation }: any) {
   return (
     <SafeAreaView style={styles.safe}>
       <View style={styles.header}>
-        <Text style={styles.eyebrow}>Nearby</Text>
-        <Text style={styles.title}>OffChat</Text>
+        <View style={styles.headerTop}>
+          <View>
+            <Text style={styles.eyebrow}>Nearby</Text>
+            <Text style={styles.title}>OffChat</Text>
+          </View>
+          <TouchableOpacity onPress={() => navigation.navigate('Settings')} style={styles.settingsButton}>
+            <Text style={styles.settingsIcon}>⚙</Text>
+          </TouchableOpacity>
+        </View>
       </View>
 
       <View style={styles.discoverableRow}>
@@ -73,9 +80,9 @@ export default function DeviceListScreen({ navigation }: any) {
         <Switch
           value={isAdvertising}
           onValueChange={() => {
-          haptics.light();
-          toggleAdvertising();
-           }}
+            haptics.light();
+            toggleAdvertising();
+          }}
           disabled={isTogglingAdvertising}
           trackColor={{ false: colors.hairline, true: colors.primaryMuted }}
           thumbColor={isAdvertising ? colors.primary : '#FFFFFF'}
@@ -134,14 +141,17 @@ export default function DeviceListScreen({ navigation }: any) {
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: colors.background },
   header: { paddingHorizontal: 24, paddingTop: 16, paddingBottom: 20 },
+  headerTop: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' },
+  settingsButton: { padding: 8 },
+  settingsIcon: { fontSize: 22 },
   eyebrow: {
     color: colors.textSecondary,
     fontSize: 12,
-    fontWeight: '600',
+    fontFamily: fonts.semiBold,
     textTransform: 'uppercase',
     letterSpacing: 1,
   },
-  title: { color: colors.textPrimary, fontSize: 32, fontWeight: '700', marginTop: 2 },
+  title: { color: colors.textPrimary, fontSize: 32, fontFamily: fonts.bold, marginTop: 2 },
   discoverableRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -150,20 +160,20 @@ const styles = StyleSheet.create({
     marginBottom: 28,
   },
   discoverableText: { flex: 1 },
-  discoverableTitle: { color: colors.textPrimary, fontSize: 15, fontWeight: '600' },
-  discoverableSub: { color: colors.textSecondary, fontSize: 12, marginTop: 1 },
+  discoverableTitle: { color: colors.textPrimary, fontSize: 15, fontFamily: fonts.semiBold },
+  discoverableSub: { color: colors.textSecondary, fontSize: 12, marginTop: 1, fontFamily: fonts.regular },
   sectionRow: { marginHorizontal: 24, marginBottom: 8 },
   sectionLabel: {
     color: colors.textSecondary,
     fontSize: 12,
-    fontWeight: '600',
+    fontFamily: fonts.semiBold,
     textTransform: 'uppercase',
     letterSpacing: 1,
   },
   row: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 24, paddingVertical: 14, gap: 14 },
   rowText: { flex: 1 },
-  deviceName: { color: colors.textPrimary, fontSize: 16, fontWeight: '500' },
-  deviceSub: { color: colors.textSecondary, fontSize: 13, marginTop: 2 },
+  deviceName: { color: colors.textPrimary, fontSize: 16, fontFamily: fonts.semiBold },
+  deviceSub: { color: colors.textSecondary, fontSize: 13, marginTop: 2, fontFamily: fonts.regular },
   divider: { height: StyleSheet.hairlineWidth, backgroundColor: colors.hairline, marginLeft: 24 + 44 + 14 },
   emptyContainer: { flexGrow: 1, justifyContent: 'center', alignItems: 'center', paddingTop: 40 },
 });

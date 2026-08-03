@@ -1,6 +1,6 @@
 export interface HandshakePayload {
   type: 'handshake';
-  publicKey: string; // base64
+  publicKey: string;
 }
 
 export interface EncryptedChatPayload {
@@ -9,4 +9,10 @@ export interface EncryptedChatPayload {
   ciphertext: string;
 }
 
-export type WirePayload = HandshakePayload | EncryptedChatPayload;
+export interface EncryptedReactionPayload {
+  type: 'reaction';
+  nonce: string;
+  ciphertext: string;
+}
+
+export type WirePayload = HandshakePayload | EncryptedChatPayload | EncryptedReactionPayload;

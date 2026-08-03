@@ -7,6 +7,7 @@ export interface OffchatMessage {
   body: string;
   createdAt: number;
   status: MessageStatus;
+  reaction?: string;
 
   // Mesh-ready fields — not used yet in direct 1-to-1 mode, but having
   // them here now means we won't need to reformat messages later when

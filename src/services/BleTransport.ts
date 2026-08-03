@@ -12,10 +12,14 @@ export interface DiscoveredPeer {
   rssi: number | null;
 }
 
+interface ActiveConnection {
+  device: Device;
+  notifySub: Subscription;
+}
+
 export class BleTransport {
   private manager: BleManager;
-  private connectedDevice: Device | null = null;
-  private notifySub: Subscription | null = null;
+  private connections: Map<string, ActiveConnection> = new Map();
 
   constructor() {
     this.manager = new BleManager();
@@ -55,16 +59,17 @@ export class BleTransport {
     this.manager.stopDeviceScan();
   }
 
-  /** Connects to a peer and subscribes to incoming wire payloads (handshake or encrypted chat). */
+  /** Connects to a peer (in addition to any existing connections) and subscribes to its notify characteristic. */
   async connect(
     deviceId: string,
-    onPayload: (payload: WirePayload) => void,
+    onPayload: (fromDeviceId: string, payload: WirePayload) => void,
   ): Promise<void> {
+    if (this.connections.has(deviceId)) return; // already connected
+
     const device = await this.manager.connectToDevice(deviceId, { autoConnect: false });
     await device.discoverAllServicesAndCharacteristics();
-    this.connectedDevice = device;
 
-    this.notifySub = device.monitorCharacteristicForService(
+    const notifySub = device.monitorCharacteristicForService(
       OFFCHAT_SERVICE_UUID,
       MESSAGE_NOTIFY_CHAR_UUID,
       (error, characteristic) => {
@@ -72,31 +77,40 @@ export class BleTransport {
         try {
           const json = Buffer.from(characteristic.value, 'base64').toString('utf8');
           const payload: WirePayload = JSON.parse(json);
-          onPayload(payload);
+          onPayload(deviceId, payload);
         } catch (e) {
           console.warn('Failed to parse incoming wire payload', e);
         }
       },
     );
+
+    this.connections.set(deviceId, { device, notifySub });
   }
 
-  async disconnect(): Promise<void> {
-    this.notifySub?.remove();
-    this.notifySub = null;
-    if (this.connectedDevice) {
-      await this.manager.cancelDeviceConnection(this.connectedDevice.id);
-      this.connectedDevice = null;
-    }
+  async disconnect(deviceId: string): Promise<void> {
+    const conn = this.connections.get(deviceId);
+    if (!conn) return;
+    conn.notifySub.remove();
+    await this.manager.cancelDeviceConnection(deviceId).catch(() => {});
+    this.connections.delete(deviceId);
   }
 
-  /** Sends any wire payload (handshake or encrypted chat) to the connected peer. */
-  async send(payload: WirePayload): Promise<void> {
-    if (!this.connectedDevice) {
-      throw new Error('No connected peer to send to.');
+  async disconnectAll(): Promise<void> {
+    await Promise.all(Array.from(this.connections.keys()).map((id) => this.disconnect(id)));
+  }
+
+  getConnectedDeviceIds(): string[] {
+    return Array.from(this.connections.keys());
+  }
+
+  async send(deviceId: string, payload: WirePayload): Promise<void> {
+    const conn = this.connections.get(deviceId);
+    if (!conn) {
+      throw new Error(`Not connected to ${deviceId}`);
     }
     const encoded = Buffer.from(JSON.stringify(payload), 'utf8').toString('base64');
     await this.manager.writeCharacteristicWithResponseForDevice(
-      this.connectedDevice.id,
+      deviceId,
       OFFCHAT_SERVICE_UUID,
       MESSAGE_WRITE_CHAR_UUID,
       encoded,
@@ -104,7 +118,7 @@ export class BleTransport {
   }
 
   destroy(): void {
-    this.notifySub?.remove();
+    this.connections.forEach((conn) => conn.notifySub.remove());
     this.manager.destroy();
   }
 }

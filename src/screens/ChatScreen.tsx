@@ -2,167 +2,232 @@ import React, { useState } from 'react';
 import {
   View,
   Text,
-  FlatList,
+  TextInput,
   TouchableOpacity,
+  FlatList,
   StyleSheet,
-  Switch,
-  RefreshControl,
+  KeyboardAvoidingView,
+  Platform,
   SafeAreaView,
+  Clipboard,
 } from 'react-native';
 import { useChat } from '../context/ChatContext';
 import Avatar from '../components/Avatar';
-import PulseRing from '../components/PulseRing';
-import { SkeletonDeviceRow } from '../components/Skeleton';
-import EmptyState from '../components/EmptyState';
+import AnimatedBubble from '../components/AnimatedBubble';
+import ConnectionStatus from '../components/ConnectionStatus';
+import MessageActionSheet from '../components/MessageActionSheet';
 import { haptics } from '../services/haptics';
 import { colors } from '../theme/colors';
+import { fonts } from '../theme/typography';
+import { OffchatMessage } from '../types/Message';
 
-export default function DeviceListScreen({ navigation }: any) {
+function formatTime(timestamp: number): string {
+  const date = new Date(timestamp);
+  let hours = date.getHours();
+  const minutes = date.getMinutes().toString().padStart(2, '0');
+  const ampm = hours >= 12 ? 'PM' : 'AM';
+  hours = hours % 12 || 12;
+  return `${hours}:${minutes} ${ampm}`;
+}
+
+export default function ChatScreen() {
   const {
-    peers,
-    isScanning,
-    isAdvertising,
-    isTogglingAdvertising,
-    startScan,
-    stopScan,
-    toggleAdvertising,
-    connectTo,
+    messages,
+    myDeviceId,
+    connectedPeerId,
+    isSecure,
+    sendMessage,
+    sendReaction,
+    deleteMessage,
+    disconnect,
   } = useChat();
+  const [draft, setDraft] = useState('');
+  const [selectedMessage, setSelectedMessage] = useState<OffchatMessage | null>(null);
 
-  const [refreshing, setRefreshing] = useState(false);
-
-  const handleConnect = async (deviceId: string) => {
+  const onSend = async () => {
+    const body = draft.trim();
+    if (!body) return;
+    setDraft('');
+    haptics.light();
     try {
-      await connectTo(deviceId);
-      navigation.navigate('Chat');
+      await sendMessage(body);
     } catch (e) {
-      console.warn('Connection failed', e);
+      haptics.error();
+      console.warn('Send failed', e);
     }
   };
 
-  const onRefresh = async () => {
-    if (!isAdvertising) return;
-    setRefreshing(true);
-    stopScan();
-    await startScan();
-    setRefreshing(false);
+  const onLongPressMessage = (msg: OffchatMessage) => {
+    haptics.medium();
+    setSelectedMessage(msg);
   };
 
-  const showSkeletons = (isTogglingAdvertising || isScanning) && isAdvertising && peers.length === 0 && !refreshing;
+  const peerName = connectedPeerId ? `Offchat-${connectedPeerId.slice(-4)}` : 'Waiting…';
 
   return (
     <SafeAreaView style={styles.safe}>
-      <View style={styles.header}>
-        <Text style={styles.eyebrow}>Nearby</Text>
-        <Text style={styles.title}>OffChat</Text>
-      </View>
-
-      <View style={styles.discoverableRow}>
-        <PulseRing active={isAdvertising} size={40}>
-          <Avatar id="self" name="Me" size={40} />
-        </PulseRing>
-        <View style={styles.discoverableText}>
-          <Text style={styles.discoverableTitle}>
-            {isAdvertising ? 'Broadcasting' : 'Make me discoverable'}
-          </Text>
-          <Text style={styles.discoverableSub}>
-            {isAdvertising ? 'Other devices can find you now' : 'Let nearby devices see you'}
-          </Text>
+      <KeyboardAvoidingView style={styles.flex} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+        <View style={styles.header}>
+          <TouchableOpacity onPress={disconnect} style={styles.backButton}>
+            <Text style={styles.backArrow}>‹</Text>
+          </TouchableOpacity>
+          {connectedPeerId && <Avatar id={connectedPeerId} name={peerName} size={36} />}
+          <View style={styles.headerText}>
+            <Text style={styles.peerName}>{peerName}</Text>
+            <ConnectionStatus connected={!!connectedPeerId} secure={isSecure} />
+          </View>
         </View>
-        <Switch
-          value={isAdvertising}
-          onValueChange={() => {
-            haptics.light();
-            toggleAdvertising();
-          }}
-          disabled={isTogglingAdvertising}
-          trackColor={{ false: colors.hairline, true: colors.primaryMuted }}
-          thumbColor={isAdvertising ? colors.primary : '#FFFFFF'}
-        />
-      </View>
 
-      <View style={styles.sectionRow}>
-        <Text style={styles.sectionLabel}>Devices</Text>
-      </View>
+        <View style={styles.headerDivider} />
 
-      {!isAdvertising ? (
-        <View style={styles.emptyContainer}>
-          <EmptyState
-            icon="📡"
-            title="Turn on discoverable"
-            subtitle="Switch on to find nearby devices and let them find you."
-          />
-        </View>
-      ) : showSkeletons ? (
-        <View>
-          <SkeletonDeviceRow />
-          <View style={styles.divider} />
-          <SkeletonDeviceRow />
-          <View style={styles.divider} />
-          <SkeletonDeviceRow />
-        </View>
-      ) : (
         <FlatList
-          data={peers}
+          data={messages}
           keyExtractor={(item) => item.id}
-          contentContainerStyle={peers.length === 0 && styles.emptyContainer}
-          ItemSeparatorComponent={() => <View style={styles.divider} />}
-          refreshControl={
-            <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.primary} />
-          }
-          ListEmptyComponent={
-            <EmptyState icon="🔍" title="No devices found yet" subtitle="Pull down to scan again." />
-          }
-          renderItem={({ item }) => (
-            <TouchableOpacity style={styles.row} onPress={() => handleConnect(item.id)}>
-              <Avatar id={item.id} name={item.name} size={44} />
-              <View style={styles.rowText}>
-                <Text style={styles.deviceName}>{item.name}</Text>
-                <Text style={styles.deviceSub}>
-                  {item.rssi != null ? `${item.rssi} dBm` : 'Nearby'}
-                </Text>
-              </View>
-            </TouchableOpacity>
-          )}
+          contentContainerStyle={styles.messageList}
+          renderItem={({ item }) => {
+            const mine = item.senderId === myDeviceId;
+            return (
+              <AnimatedBubble style={[styles.bubbleRow, mine && styles.bubbleRowMine]}>
+                <TouchableOpacity
+                  activeOpacity={0.85}
+                  onLongPress={() => onLongPressMessage(item)}
+                  style={[styles.bubble, mine ? styles.bubbleMine : styles.bubbleTheirs]}
+                >
+                  <Text style={[styles.bubbleText, mine ? styles.bubbleTextMine : styles.bubbleTextTheirs]}>
+                    {item.body}
+                  </Text>
+                  {item.reaction && (
+                    <View style={styles.reactionBadge}>
+                      <Text style={styles.reactionBadgeText}>{item.reaction}</Text>
+                    </View>
+                  )}
+                </TouchableOpacity>
+                <View style={styles.metaRow}>
+                  <Text style={styles.timestamp}>{formatTime(item.createdAt)}</Text>
+                  {mine && <Text style={styles.status}> · {item.status}</Text>}
+                </View>
+              </AnimatedBubble>
+            );
+          }}
         />
-      )}
+
+        <View style={styles.inputBar}>
+          <TextInput
+            style={styles.input}
+            value={draft}
+            onChangeText={setDraft}
+            placeholder={isSecure ? 'Message' : 'Waiting for secure connection…'}
+            placeholderTextColor={colors.textSecondary}
+            editable={isSecure}
+            onSubmitEditing={onSend}
+          />
+          <TouchableOpacity
+            style={[styles.sendButton, !isSecure && styles.sendButtonDisabled]}
+            onPress={onSend}
+            disabled={!isSecure}
+          >
+            <Text style={styles.sendArrow}>↑</Text>
+          </TouchableOpacity>
+        </View>bottom sheet lives outside the KeyboardAvoidingView flow
+      </KeyboardAvoidingView>
+
+      <MessageActionSheet
+        visible={!!selectedMessage}
+        onClose={() => setSelectedMessage(null)}
+        onReact={(emoji) => {
+          if (selectedMessage) {
+            haptics.light();
+            sendReaction(selectedMessage.id, emoji);
+          }
+        }}
+        onCopy={() => {
+          if (selectedMessage) {
+            Clipboard.setString(selectedMessage.body);
+            haptics.success();
+          }
+        }}
+        onDelete={() => {
+          if (selectedMessage) {
+            deleteMessage(selectedMessage.id);
+            haptics.medium();
+          }
+        }}
+      />
     </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: colors.background },
-  header: { paddingHorizontal: 24, paddingTop: 16, paddingBottom: 20 },
-  eyebrow: {
-    color: colors.textSecondary,
-    fontSize: 12,
-    fontWeight: '600',
-    textTransform: 'uppercase',
-    letterSpacing: 1,
-  },
-  title: { color: colors.textPrimary, fontSize: 32, fontWeight: '700', marginTop: 2 },
-  discoverableRow: {
+  flex: { flex: 1 },
+  header: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 14,
-    marginHorizontal: 24,
-    marginBottom: 28,
+    paddingHorizontal: 20,
+    paddingVertical: 14,
+    gap: 12,
   },
-  discoverableText: { flex: 1 },
-  discoverableTitle: { color: colors.textPrimary, fontSize: 15, fontWeight: '600' },
-  discoverableSub: { color: colors.textSecondary, fontSize: 12, marginTop: 1 },
-  sectionRow: { marginHorizontal: 24, marginBottom: 8 },
-  sectionLabel: {
-    color: colors.textSecondary,
-    fontSize: 12,
-    fontWeight: '600',
-    textTransform: 'uppercase',
-    letterSpacing: 1,
+  backButton: { paddingRight: 2 },
+  backArrow: { fontSize: 28, color: colors.textPrimary, marginTop: -2, fontFamily: fonts.regular },
+  headerText: { flex: 1 },
+  peerName: { color: colors.textPrimary, fontSize: 16, fontFamily: fonts.semiBold },
+  headerDivider: { height: StyleSheet.hairlineWidth, backgroundColor: colors.hairline },
+  messageList: { paddingHorizontal: 20, paddingTop: 12, paddingBottom: 12, flexGrow: 1, justifyContent: 'flex-end' },
+  bubbleRow: { alignSelf: 'flex-start', maxWidth: '78%', marginVertical: 4 },
+  bubbleRowMine: { alignSelf: 'flex-end' },
+  bubble: { paddingHorizontal: 16, paddingVertical: 11, borderRadius: 18, position: 'relative' },
+  bubbleMine: { backgroundColor: colors.primary, borderBottomRightRadius: 4 },
+  bubbleTheirs: {
+    backgroundColor: colors.surface,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: colors.hairline,
+    borderBottomLeftRadius: 4,
   },
-  row: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 24, paddingVertical: 14, gap: 14 },
-  rowText: { flex: 1 },
-  deviceName: { color: colors.textPrimary, fontSize: 16, fontWeight: '500' },
-  deviceSub: { color: colors.textSecondary, fontSize: 13, marginTop: 2 },
-  divider: { height: StyleSheet.hairlineWidth, backgroundColor: colors.hairline, marginLeft: 24 + 44 + 14 },
-  emptyContainer: { flexGrow: 1, justifyContent: 'center', alignItems: 'center', paddingTop: 40 },
+  bubbleText: { fontSize: 15, lineHeight: 20, fontFamily: fonts.regular },
+  bubbleTextMine: { color: '#FFFFFF' },
+  bubbleTextTheirs: { color: colors.textPrimary },
+  reactionBadge: {
+    position: 'absolute',
+    bottom: -10,
+    right: -6,
+    backgroundColor: colors.surface,
+    borderRadius: 10,
+    paddingHorizontal: 4,
+    paddingVertical: 1,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: colors.hairline,
+  },
+  reactionBadgeText: { fontSize: 12 },
+  metaRow: { flexDirection: 'row', marginTop: 3, paddingHorizontal: 4 },
+  timestamp: { color: colors.textSecondary, fontSize: 10, fontFamily: fonts.regular },
+  status: { color: colors.textSecondary, fontSize: 10, fontFamily: fonts.regular },
+  inputBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 20,
+    paddingVertical: 12,
+    gap: 10,
+  },
+  input: {
+    flex: 1,
+    backgroundColor: colors.surface,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: colors.hairline,
+    color: colors.textPrimary,
+    borderRadius: 20,
+    paddingHorizontal: 16,
+    paddingVertical: 11,
+    fontSize: 15,
+    fontFamily: fonts.regular,
+  },
+  sendButton: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: colors.primary,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  sendButtonDisabled: { backgroundColor: colors.hairline },
+  sendArrow: { color: '#fff', fontSize: 18, fontFamily: fonts.semiBold },
 });

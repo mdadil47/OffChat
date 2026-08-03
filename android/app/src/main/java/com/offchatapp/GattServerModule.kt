@@ -6,6 +6,7 @@ import android.content.Context
 import com.facebook.react.bridge.*
 import com.facebook.react.modules.core.DeviceEventManagerModule
 import java.util.UUID
+import java.util.concurrent.ConcurrentHashMap
 
 class GattServerModule(reactContext: ReactApplicationContext) :
     ReactContextBaseJavaModule(reactContext) {
@@ -17,7 +18,9 @@ class GattServerModule(reactContext: ReactApplicationContext) :
     private var gattServer: BluetoothGattServer? = null
     private var advertiser: BluetoothLeAdvertiser? = null
     private var notifyChar: BluetoothGattCharacteristic? = null
-    private var connectedDevice: BluetoothDevice? = null
+
+    // Keyed by device address — supports multiple simultaneous centrals connected to us.
+    private val connectedDevices = ConcurrentHashMap<String, BluetoothDevice>()
 
     override fun getName() = "OffchatGattServer"
 
@@ -54,25 +57,19 @@ class GattServerModule(reactContext: ReactApplicationContext) :
             gattServer = btManager.openGattServer(reactApplicationContext, object : BluetoothGattServerCallback() {
 
                 override fun onConnectionStateChange(device: BluetoothDevice?, status: Int, newState: Int) {
+                    val address = device?.address ?: return
                     if (newState == BluetoothProfile.STATE_CONNECTED) {
-                        connectedDevice = device
-                        val params = Arguments.createMap().apply {
-                            putString("deviceId", device?.address ?: "unknown")
-                            putBoolean("connected", true)
-                        }
-                        reactApplicationContext
-                            .getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter::class.java)
-                            .emit("OffchatPeripheralConnectionChanged", params)
+                        connectedDevices[address] = device
                     } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
-                        connectedDevice = null
-                        val params = Arguments.createMap().apply {
-                            putString("deviceId", device?.address ?: "unknown")
-                            putBoolean("connected", false)
-                        }
-                        reactApplicationContext
-                            .getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter::class.java)
-                            .emit("OffchatPeripheralConnectionChanged", params)
+                        connectedDevices.remove(address)
                     }
+                    val params = Arguments.createMap().apply {
+                        putString("deviceId", address)
+                        putBoolean("connected", newState == BluetoothProfile.STATE_CONNECTED)
+                    }
+                    reactApplicationContext
+                        .getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter::class.java)
+                        .emit("OffchatPeripheralConnectionChanged", params)
                 }
 
                 override fun onCharacteristicWriteRequest(
@@ -83,7 +80,10 @@ class GattServerModule(reactContext: ReactApplicationContext) :
                 ) {
                     if (characteristic?.uuid == WRITE_CHAR_UUID && value != null) {
                         val json = String(value, Charsets.UTF_8)
-                        val params = Arguments.createMap().apply { putString("payload", json) }
+                        val params = Arguments.createMap().apply {
+                            putString("deviceId", device?.address ?: "unknown")
+                            putString("payload", json)
+                        }
                         reactApplicationContext
                             .getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter::class.java)
                             .emit("OffchatMessageReceived", params)
@@ -132,18 +132,20 @@ class GattServerModule(reactContext: ReactApplicationContext) :
         try {
             advertiser?.stopAdvertising(object : AdvertiseCallback() {})
             gattServer?.close()
+            connectedDevices.clear()
             promise.resolve(true)
         } catch (e: Exception) {
             promise.reject("STOP_ADVERTISING_ERROR", e)
         }
     }
 
+    /** Sends to one specific connected central, identified by device address. */
     @ReactMethod
-    fun notifyMessage(payload: String, promise: Promise) {
-        val device = connectedDevice
+    fun notifyMessage(deviceId: String, payload: String, promise: Promise) {
+        val device = connectedDevices[deviceId]
         val char = notifyChar
         if (device == null || char == null) {
-            promise.reject("NO_CONNECTION", "No connected central to notify.")
+            promise.reject("NO_CONNECTION", "No connected central with id $deviceId")
             return
         }
         char.value = payload.toByteArray(Charsets.UTF_8)
@@ -152,12 +154,8 @@ class GattServerModule(reactContext: ReactApplicationContext) :
     }
 
     @ReactMethod
-    fun addListener(eventName: String) {
-        // Required for RN's NativeEventEmitter, no-op here.
-    }
+    fun addListener(eventName: String) {}
 
     @ReactMethod
-    fun removeListeners(count: Int) {
-        // Required for RN's NativeEventEmitter, no-op here.
-    }
+    fun removeListeners(count: Int) {}
 }

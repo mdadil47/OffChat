@@ -19,7 +19,6 @@ class GattServerModule(reactContext: ReactApplicationContext) :
     private var advertiser: BluetoothLeAdvertiser? = null
     private var notifyChar: BluetoothGattCharacteristic? = null
 
-    // Keyed by device address — supports multiple simultaneous centrals connected to us.
     private val connectedDevices = ConcurrentHashMap<String, BluetoothDevice>()
 
     override fun getName() = "OffchatGattServer"
@@ -111,11 +110,23 @@ class GattServerModule(reactContext: ReactApplicationContext) :
                 .setAdvertiseMode(AdvertiseSettings.ADVERTISE_MODE_LOW_LATENCY)
                 .setConnectable(true)
                 .build()
+
+            // Primary advertisement packet: JUST the service UUID.
+            // Legacy BLE advertising packets are capped at 31 bytes total —
+            // packing the UUID (18 bytes) AND the device name in one packet
+            // can silently overflow that limit, causing Android to drop part
+            // of the payload without any error. Splitting the name into a
+            // separate scan-response packet avoids this entirely.
             val data = AdvertiseData.Builder()
                 .addServiceUuid(android.os.ParcelUuid(SERVICE_UUID))
+                .setIncludeDeviceName(false)
+                .build()
+
+            val scanResponse = AdvertiseData.Builder()
                 .setIncludeDeviceName(true)
                 .build()
-            advertiser?.startAdvertising(settings, data, object : AdvertiseCallback() {
+
+            advertiser?.startAdvertising(settings, data, scanResponse, object : AdvertiseCallback() {
                 override fun onStartFailure(errorCode: Int) {
                     promise.reject("ADVERTISE_FAILED", "Advertising failed with code $errorCode")
                 }
@@ -139,7 +150,6 @@ class GattServerModule(reactContext: ReactApplicationContext) :
         }
     }
 
-    /** Sends to one specific connected central, identified by device address. */
     @ReactMethod
     fun notifyMessage(deviceId: String, payload: String, promise: Promise) {
         val device = connectedDevices[deviceId]
